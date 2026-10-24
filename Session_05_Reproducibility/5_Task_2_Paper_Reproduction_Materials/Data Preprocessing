@@ -1,0 +1,53 @@
+#import dataset
+df = pd.read_csv('Dataset.csv')
+
+#check the imported data
+df
+
+#handle missing values
+df_cleaned = df.dropna()
+
+#remove duplicates
+df_cleaned = df_cleaned.drop_duplicates()
+
+#encoding
+for column_name, order in ordinal_columns.items():
+    df_cleaned[column_name] = pd.Categorical(
+        df_cleaned[column_name],
+        categories=order,
+        ordered=True
+    ).codes
+
+for column_name in df_cleaned.columns:
+    if column_name not in ordinal_columns:
+        label_encoder = preprocessing.LabelEncoder()
+        df_cleaned[column_name] = label_encoder.fit_transform(df_cleaned[column_name])
+        mapping = dict(zip(label_encoder.classes_, range(len(label_encoder.classes_))))
+        print("The Encoding for Column ", column_name, " is ", mapping)
+
+#split the dataset
+y=df_cleaned['Dropout']
+X=df_cleaned.drop(columns=['Dropout'])
+
+#apply SMOTE + ENN
+smote_enn = SMOTEENN(sampling_strategy=0.7)  
+X_resampled, y_resampled = smote_enn.fit_resample(X, y)
+
+print("New class distribution:", Counter(y_resampled))
+
+#calculate class distribution after resampling
+class_counts = y_resampled.value_counts()
+
+#create pie chart
+plt.figure(figsize=(6, 6))
+class_counts.plot.pie(
+    autopct='%1.1f%%',  # Display percentages
+    startangle=90,      # Rotate the pie chart
+    colors=['skyblue', 'orange'],  # Set custom colors
+    labels=class_counts.index,     # Set class labels
+    explode=[0.1, 0]    # Highlight the smaller class
+)
+
+plt.title('Class Distribution')
+plt.ylabel('')  # Hide the y-axis label
+plt.show()

@@ -1,0 +1,231 @@
+#SHAP explanations
+#select random student
+student_data = X_test.sample(n=1)
+
+def predict_fn(x):
+    return knn_model.predict_proba(x)[:, 1]  
+
+background = shap.kmeans(X_train, 10)
+explainer = shap.KernelExplainer(predict_fn, background)
+
+shap_values = explainer.shap_values(student_data)
+
+base_value = explainer.expected_value
+if isinstance(base_value, (list, np.ndarray)):
+    base_value = base_value[0]
+
+explanation = shap.Explanation(
+    values=np.array(shap_values[0]).flatten(),
+    base_values=base_value,
+    data=student_data.iloc[0].values,
+    feature_names=student_data.columns.tolist()
+)
+
+shap.plots.waterfall(explanation)
+
+pred_probs = knn_model.predict_proba(student_data)[0]
+pred_class = knn_model.predict(student_data)[0]
+
+print(f"- Probability of staying (No Dropout) = {pred_probs[0]:.3f}")
+print(f"- Probability of dropping out (Dropout) = {pred_probs[1]:.3f}")
+print(f"- Predicted class = {'Not Dropped Out' if pred_class == 0 else 'Dropped Out'}")
+
+#LIME explanations
+#select random student
+student_data = X_test.sample(n=1)
+
+explainer = lime.lime_tabular.LimeTabularExplainer(
+    training_data=np.array(X_train),
+    feature_names=X_train.columns.tolist(),
+    class_names=['Not Dropped Out', 'Dropped Out'],
+    mode='classification'
+)
+
+exp = explainer.explain_instance(
+    data_row=student_data.iloc[0],
+    predict_fn=knn_model.predict_proba,
+    num_features=len(X_train.columns)
+)
+
+exp.show_in_notebook(show_table=True, show_all=False)
+
+pred_probs = knn_model.predict_proba(student_data)[0]
+pred_class = knn_model.predict(student_data)[0]
+
+print(f"- Probability of staying (No Dropout) = {pred_probs[0]:.3f}")
+print(f"- Probability of dropping out (Dropout) = {pred_probs[1]:.3f}")
+print(f"- Predicted class = {'Not Dropped Out' if pred_class == 0 else 'Dropped Out'}")
+
+#SHAP top 10 features (Repeat for the another class)
+shap_vals_array = np.array(shap_values[1])  
+
+mean_shap = np.mean(np.abs(shap_vals_array), axis=0)
+
+shap_feature_importance = pd.DataFrame({
+    'Feature': X_test.columns,
+    'Mean_SHAP': mean_shap
+}).sort_values(by='Mean_SHAP', ascending=False)
+
+top10_shap = shap_feature_importance.head(10)
+print("Top 10 features using SHAP:")
+print(top10_shap)
+
+#LIME top 10 features (Repeat for the another class)
+explainer = lime.lime_tabular.LimeTabularExplainer(
+    training_data=np.array(X_train),
+    feature_names=X_train.columns.tolist(),
+    class_names=["No Dropout", "Dropout"],
+    mode="classification"
+)
+
+lime_contribs = defaultdict(list)
+
+for i in range(len(X_test)):
+    student_data = X_test.iloc[i]
+    exp = explainer.explain_instance(
+        data_row=student_data.values,
+        predict_fn=knn_model.predict_proba,
+        num_features=len(X_train.columns)
+    )
+    for feature, value in exp.as_list(label=1):  # label=1 → Dropout
+        lime_contribs[feature].append(abs(value))
+
+mean_lime = {feat: np.mean(vals) for feat, vals in lime_contribs.items()}
+
+lime_feature_importance = pd.DataFrame({
+    'Feature': list(mean_lime.keys()),
+    'Mean_LIME': list(mean_lime.values())
+}).sort_values(by='Mean_LIME', ascending=False)
+
+top10_lime = lime_feature_importance.head(10)
+print("Top 10 features according to LIME:")
+print(top10_lime)
+
+#SHAP summary
+shap_vals_array = np.array(shap_values[1])  
+
+shap_df = shap_vals_array
+features = X_test.columns
+
+shap.plots.beeswarm(shap_vals_array, feature_names=features, max_display=10)
+
+plt.show()
+
+#LEAF evaluation
+#Fidelity
+# مدى مطابقة التفسير مع تنبؤ النموذج الفعلي
+def fidelity(model, X, explanations, predict_fn):
+    y_pred = np.argmax(predict_fn(X), axis=1)
+    
+    n_top = 10
+    y_pred_expl = []
+    for i, row in enumerate(X.values):
+        top_idx = np.argsort(np.abs(explanations[i]))[::-1][:n_top]
+        row_masked = np.zeros_like(row)
+        row_masked[top_idx] = row[top_idx]  
+        y_pred_expl.append(np.argmax(predict_fn(row_masked.reshape(1,-1)), axis=1)[0])
+    return accuracy_score(y_pred, y_pred_expl)
+
+#Local Concordance
+def local_concordance(model, X, explanations, predict_fn):
+    y_prob_model = predict_fn(X)[:,1]  
+    y_prob_exp = np.mean(explanations, axis=1) 
+    return np.corrcoef(y_prob_model, y_prob_exp)[0,1]
+
+#Prescriptivity
+def prescriptivity(explanations, threshold=0.1):
+    n_actionable = np.sum(np.abs(explanations) > threshold, axis=1)
+    return np.mean(n_actionable)
+
+#Stability
+def stability(model, X, explanations, predict_fn, epsilon=0.01):
+    X_perturbed = X + np.random.normal(0, epsilon, X.shape)
+    explanations_perturbed = explanations 
+    return np.mean(np.linalg.norm(explanations - explanations_perturbed, axis=1))
+
+#Apply LEAF metrics to SHAP
+shap_array = np.array(shap_values[1])
+
+fidelity_shap = fidelity(knn_model, X_test, shap_array, knn_model.predict_proba)
+local_concordance_shap = local_concordance(knn_model, X_test, shap_array, knn_model.predict_proba)
+prescriptivity_shap = prescriptivity(shap_array)
+stability_shap = stability(knn_model, X_test, shap_array, knn_model.predict_proba)
+
+print("LEAF metrics for SHAP:")
+print(f"Fidelity: {fidelity_shap:.3f}")
+print(f"Local Concordance: {local_concordance_shap:.3f}")
+print(f"Prescriptivity: {prescriptivity_shap:.3f}")
+print(f"Stability: {stability_shap:.3f}")
+
+#Apply LEAF metrics to LIME
+lime_explainer = lime.lime_tabular.LimeTabularExplainer(
+    training_data=np.array(X_train),
+    feature_names=X_train.columns.tolist(),
+    class_names=["No Dropout","Dropout"],
+    mode="classification"
+)
+
+lime_array = []
+for i in range(len(X_test)):
+    exp = lime_explainer.explain_instance(
+        data_row=X_test.iloc[i].values,
+        predict_fn=knn_model.predict_proba,
+        num_features=len(X_train.columns)
+    )
+    arr = np.zeros(X_test.shape[1])
+    for feature, val in exp.as_list(label=1):
+        idx = X_test.columns.get_loc(feature)
+        arr[idx] = val
+    lime_array.append(arr)
+lime_array = np.array(lime_array)
+
+fidelity_lime = fidelity(knn_model, X_test, lime_array, knn_model.predict_proba)
+local_concordance_lime = local_concordance(knn_model, X_test, lime_array, knn_model.predict_proba)
+prescriptivity_lime = prescriptivity(lime_array)
+stability_lime = stability(knn_model, X_test, lime_array, knn_model.predict_proba)
+
+print("\nLEAF metrics for LIME:")
+print(f"Fidelity: {fidelity_lime:.3f}")
+print(f"Local Concordance: {local_concordance_lime:.3f}")
+print(f"Prescriptivity: {prescriptivity_lime:.3f}")
+print(f"Stability: {stability_lime:.3f}")
+
+#Computation time for SHAP
+explainer = shap.KernelExplainer(knn_model.predict_proba, shap.kmeans(X_train, 10))
+times = []
+
+for i in range(len(X_test)):
+    row = X_test.iloc[i:i+1]  
+    start = time.time()
+    _ = explainer.shap_values(row)
+    end = time.time()
+    times.append(end - start)
+
+avg_time_per_record = np.mean(times)
+print(f"Average SHAP computation time per record: {avg_time_per_record:.4f} seconds")
+
+
+#Computation time for LIME
+
+lime_explainer = lime.lime_tabular.LimeTabularExplainer(
+    training_data=np.array(X_train),
+    feature_names=X_train.columns.tolist(),
+    class_names=["No Dropout", "Dropout"],
+    mode="classification"
+)
+
+times_lime = []
+
+for i in range(len(X_test)):
+    row = X_test.iloc[i]
+    start = time.time()
+    _ = lime_explainer.explain_instance(
+        data_row=row.values,
+        predict_fn=knn_model.predict_proba,
+        num_features=len(X_train.columns)
+    )
+    end = time.time()
+    times_lime.append(end - start)
+
+avg_time_lime = np.mean(times_lime)
+print(f"Average LIME computation time per record: {avg_time_lime:.4f} seconds")

@@ -1,0 +1,148 @@
+#Feature Selection using different techniques
+
+#First Technique: F-statistic to select top features
+#repeat this part for different values of k (19, 16, 13, and 10 features) 
+selector = SelectKBest(score_func=f_classif, k=22)
+reduced_data = selector.fit_transform(X_resampled, y_resampled)
+
+selected_features = X.columns[selector.get_support()]
+print("Selected Features using f-statistics:", selected_features.tolist())
+
+#transform dataframe with selected features
+reduced_data = pd.DataFrame(reduced_data, columns=selected_features)
+reduced_data.head()
+
+#Second Technique: chi-square to select top features
+#repeat this part for different values of k (19, 16, 13, and 10 features) 
+selector = SelectKBest(score_func=chi2, k=22)
+reduced_data = selector.fit_transform(X_resampled, y_resampled)
+
+selected_features = X.columns[selector.get_support()]
+print("Selected Features using chi-square:", selected_features.tolist())
+
+#transform dataframe with selected features
+reduced_data = pd.DataFrame(reduced_data, columns=selected_features)
+reduced_data.head()
+
+#Third Technique: RFE to select top features
+#repeat this part for different values of k (19, 16, 13, and 10 features) 
+base_model = RandomForestClassifier(random_state=42)
+rfe = RFE(estimator=base_model, n_features_to_select=22, step=1)
+rfe.fit(X_resampled, y_resampled)
+
+#get the selected features
+selected_features = X_resampled.columns[rfe.support_]
+print("Selected Features using RFE:", selected_features.tolist())
+
+#transform dataframe with selected features
+reduced_data = rfe.transform(X_resampled)
+
+#Fourth Technique: MI to select top features
+#repeat this part for different values of k (19, 16, 13, and 10 features) 
+mi_scores = mutual_info_classif(X_resampled, y_resampled, random_state=42)
+mi_df = pd.DataFrame({
+   'Feature': X_resampled.columns,
+    'MI Score': mi_scores
+}).sort_values(by='MI Score', ascending=False)
+
+print("Mutual Information Scores:", mi_df)
+
+top_features = mi_df.nlargest(22, 'MI Score')['Feature'].tolist()
+print("Top Features via MI:", top_features)
+
+#transform dataframe with selected features
+reduced_data = X_resampled[top_features]
+
+#train - test split
+X_train, X_test, y_train, y_test = train_test_split(pd.DataFrame(reduced_data), y_resampled, test_size=0.20, random_state=42)
+
+#training models
+
+#LR algorithm
+lr_model = LogisticRegression(random_state=42, max_iter=1000)
+
+#RF algorithm
+rf_model  =  RandomForestClassifier(    n_estimators=200,          # Number of trees
+    max_depth=10,              # Max depth of trees
+    min_samples_split=5,       # Min samples to split a node
+    min_samples_leaf=4,        # Min samples at a leaf
+    max_features='sqrt',       # Number of features to consider
+    bootstrap=True,            # Use bootstrap samples
+    n_jobs=-1,                 # Use all CPUs for parallel processing
+    random_state=42,           # Ensure reproducibility
+    oob_score=True             # Estimate out-of-bag score
+)
+
+#SVM
+svm_model  =  SVC(probability=True,kernel='rbf', random_state=42)
+
+#Multilayer Perceptron Classifier (MLP)
+mlp_model  = MLPClassifier(hidden_layer_sizes=(100,), activation='relu', solver='adam', max_iter=200)
+
+#K-Nearest Neighbors Classifier (KNN)
+knn_model  = KNeighborsClassifier(n_neighbors=5)
+
+#Gradient Boosting Classifier (GB)
+gbc_model  = GradientBoostingClassifier(
+    n_estimators=200,             # Number of trees
+    learning_rate=0.05,           # Learning rate
+    max_depth=5,                  # Max depth of trees
+    min_samples_split=5,          # Min samples to split a node
+    min_samples_leaf=3,           # Min samples at a leaf
+    subsample=0.8,                # Subsample fraction
+    max_features='sqrt',          # Max features to consider
+    random_state=42,              # Ensure reproducibility
+    )
+
+#XGBoost Classifier
+xgb_model = XGBClassifier(
+    n_estimators=200,
+    learning_rate=0.05,
+    max_depth=5,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    random_state=42
+)
+
+#Catboost
+cb_model = CatBoostClassifier(verbose=0, random_state=42)
+
+#Decision Tree Classifier
+dt_model = DecisionTreeClassifier(
+    max_depth=10,
+    min_samples_split=5,
+    min_samples_leaf=4,
+    random_state=42
+)
+
+#Linear Discriminant Analysis (LDA)
+lda_model = LDA()
+
+# Gaussian Naive Bayes (GNB)
+gnb_model = GaussianNB()
+
+#Evaluation
+metricslr_reduced=trainandtest('LR',X_train,y_train,X_test,y_test,lr_model)
+metricsrf_reduced=trainandtest('RF',X_train,y_train,X_test,y_test,rf_model)
+metricssvm_reduced=trainandtest('SVM',X_train,y_train,X_test,y_test,svm_model)
+metricsmlp_reduced=trainandtest('MLP',X_train,y_train,X_test,y_test,mlp_model)
+metricsknn_reduced=trainandtest('KNN',X_train,y_train,X_test,y_test,knn_model)
+metricsgbc_reduced=trainandtest('GBC',X_train,y_train,X_test,y_test,gbc_model)
+metricsxgb_reduced=trainandtest('XGB',X_train,y_train,X_test,y_test,xgb_model)
+metricscb_reduced=trainandtest('CB',X_train,y_train,X_test,y_test,cb_model)
+metricsdt_reduced=trainandtest('DT',X_train,y_train,X_test,y_test,dt_model)
+metricslda_reduced=trainandtest('LDA',X_train,y_train,X_test,y_test,lda_model)
+metricsgnb_reduced=trainandtest('GNB',X_train,y_train,X_test,y_test,gnb_model)
+
+# Combine models using VotingClassifier
+voting_clf = VotingClassifier(estimators=[
+   ('CB', cb_model),
+   ('XGB', xgb_model),
+   ('GBC', gbc_model),
+   ('KNN', knn_model),
+], voting='soft')
+
+metricsvoting_reduced=trainandtest('VOTING',X_train,y_train,X_test,y_test,voting_clf)
+
+metricsvoting_reduced
+
